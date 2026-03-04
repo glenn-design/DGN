@@ -8,7 +8,6 @@ import base64
 
 app = Flask(__name__)
 
-# Konfigurer Gemini
 genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
 
 
@@ -16,8 +15,6 @@ genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
 def visualiser():
     data = request.json
     beskrivelse = data.get("beskrivelse")
-
-    # Støtter både foto_base64 (fra Claude MCP) og foto_url (direkte kall)
     foto_base64 = data.get("foto_base64")
     foto_url = data.get("foto_url")
 
@@ -39,42 +36,46 @@ def visualiser():
         img.save(buffered, format="JPEG")
         img_b64 = base64.b64encode(buffered.getvalue()).decode()
 
-        # Bygg prompt
-        prompt = f"""Du er en profesjonell arkitektvisualisering-AI.
-Basert på befaringsbildet, generer en fotorealistisk visualisering av det ferdige resultatet etter dette arbeidet:
+        prompt = f"""Generer en fotorealistisk visualisering av dette byggeprosjektet etter ferdigstillelse:
 
 {beskrivelse}
 
-Behold samme perspektiv, kameravinkel og omgivelser som i originalbildet.
-Resultatet skal se ut som et ekte fotografi — ikke en tegning eller illustrasjon."""
+Behold samme perspektiv og kameravinkel som i befaringsbildet.
+Resultatet skal se ut som et ekte fotografi."""
 
-        # Bruk Gemini bildegenereringsmodell
         model = genai.GenerativeModel('gemini-2.0-flash-exp-image-generation')
+
         res = model.generate_content(
             [
-                prompt,
-                {"mime_type": "image/jpeg", "data": img_b64}
+                {"mime_type": "image/jpeg", "data": img_b64},
+                prompt
             ],
-            generation_config={"response_modalities": ["image"]}
+            generation_config=genai.GenerationConfig(
+                response_modalities=["TEXT", "IMAGE"]
+            )
         )
 
-        # Hent ut generert bilde
+        # Gå gjennom alle parts og finn bildet
         for part in res.candidates[0].content.parts:
-            if hasattr(part, 'inline_data') and part.inline_data:
+            if hasattr(part, 'inline_data') and part.inline_data is not None:
                 return jsonify({
                     "visualisering_base64": part.inline_data.data,
                     "mime_type": part.inline_data.mime_type
                 })
 
-        return jsonify({"error": "Ingen bilde generert — prøv med en annen beskrivelse"}), 500
+        # Ingen bilde funnet — returner debug-info
+        parts_info = []
+        for p in res.candidates[0].content.parts:
+            parts_info.append(str(type(p)) + ": " + str(dir(p))[:100])
+        return jsonify({"error": "Ingen bilde i respons", "debug": parts_info}), 500
 
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        import traceback
+        return jsonify({"error": str(e), "trace": traceback.format_exc()}), 500
 
 
 @app.route('/sse')
 def sse():
-    """MCP tool discovery endpoint"""
     return jsonify({
         "tools": [{
             "name": "visualiser_prosjekt",
@@ -88,7 +89,7 @@ def sse():
                     },
                     "beskrivelse": {
                         "type": "string",
-                        "description": "Hva som skal gjøres, f.eks. 'ny kledning i hvit trepanel, ny terrasse'"
+                        "description": "Hva som skal gjøres, f.eks. 'ny terrasse i trykkimpregnert tre'"
                     }
                 },
                 "required": ["foto_base64", "beskrivelse"]
