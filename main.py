@@ -56,16 +56,36 @@ Resultatet skal se ut som et ekte fotografi."""
         # Gå gjennom alle parts og finn bildet
         for part in res.candidates[0].content.parts:
             if hasattr(part, 'inline_data') and part.inline_data is not None:
-                return jsonify({
-                    "visualisering_base64": base64.b64encode(part.inline_data.data).decode("utf-8"),
-                    "mime_type": part.inline_data.mime_type
-                })
+                raw = part.inline_data.data
+                mime = part.inline_data.mime_type
+
+                # data kan være bytes eller allerede en base64-streng
+                if isinstance(raw, bytes):
+                    img_out = base64.b64encode(raw).decode("utf-8")
+                elif isinstance(raw, str):
+                    img_out = raw  # allerede base64
+                else:
+                    continue
+
+                if img_out:
+                    return jsonify({
+                        "visualisering_base64": img_out,
+                        "mime_type": mime
+                    })
 
         # Ingen bilde funnet — returner debug-info
-        parts_info = []
+        parts_debug = []
         for p in res.candidates[0].content.parts:
-            parts_info.append(str(type(p)) + ": " + str(dir(p))[:100])
-        return jsonify({"error": "Ingen bilde i respons", "debug": parts_info}), 500
+            if hasattr(p, 'inline_data') and p.inline_data:
+                parts_debug.append({
+                    "type": str(type(p.inline_data.data)),
+                    "len": len(p.inline_data.data) if p.inline_data.data else 0,
+                    "mime": p.inline_data.mime_type
+                })
+            elif hasattr(p, 'text'):
+                parts_debug.append({"text": p.text[:200]})
+
+        return jsonify({"error": "Ingen bilde i respons", "debug": parts_debug}), 500
 
     except Exception as e:
         import traceback
