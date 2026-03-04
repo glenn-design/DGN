@@ -1,4 +1,3 @@
-mcp
-httpx
-starlette
-uvicorn
+flask
+google-generativeai
+Pillow
