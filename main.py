@@ -1,95 +1,80 @@
 import os
-import httpx
-import uvicorn
-from mcp.server import Server
-from mcp.types import Tool, TextContent, ImageContent
-from mcp.server.sse import SseServerTransport
-from starlette.applications import Starlette
-from starlette.routing import Route
+import base64
+from flask import Flask, request, jsonify
+import google.generativeai as genai
+from PIL import Image
+import io
 
-# Henter API-nøkkel fra Railway sine miljøvariabler
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-# Oppdatert til den nyeste Gemini 3 Flash Image-modellen for bildegenerering/redigering
-API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-image:generateContent"
+app = Flask(__name__)
 
-server = Server("nanobanana-mcp")
+# Konfigurer Gemini med nøkkelen fra Railway
+genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
 
-@server.list_tools()
-async def list_tools():
-    return [
-        Tool(
-            name="visualiser_prosjekt",
-            description="Tar inn befaringsfoto og prosjektbeskrivelse, returnerer visualisering av ferdig prosjekt",
-            inputSchema={
+def resize_image(base64_str, max_size=(800, 800)):
+    # Denne funksjonen fikser "32000 token"-feilen ved å krympe bildet før sending
+    try:
+        # Fjerner header hvis den finnes (f.eks. data:image/jpeg;base64,)
+        if "," in base64_str:
+            base64_str = base64_str.split(",")[1]
+            
+        img_data = base64.b64decode(base64_str)
+        img = Image.open(io.BytesIO(img_data))
+        
+        # Konverter til RGB (viktig hvis bildet er PNG/RGBA)
+        if img.mode in ("RGBA", "P"):
+            img = img.convert("RGB")
+            
+        img.thumbnail(max_size, Image.Resampling.LANCZOS)
+        
+        buffered = io.BytesIO()
+        img.save(buffered, format="JPEG", quality=85)
+        return base64.b64encode(buffered.getvalue()).decode('utf-8')
+    except Exception as e:
+        print(f"Resize error: {e}")
+        return base64_str
+
+@app.route('/visualiser_prosjekt', methods=['POST'])
+def visualiser():
+    data = request.json
+    foto_base64 = data.get("foto_base64")
+    beskrivelse = data.get("beskrivelse")
+
+    if not foto_base64:
+        return jsonify({"error": "Mangler bilde"}), 400
+
+    # Krymper bildet før det sendes til Google for å spare tokens
+    optimalisert_bilde = resize_image(foto_base64)
+
+    # Bruker korrekt modellnavn: gemini-3-flash-image (Nano Banana 2)
+    model = genai.GenerativeModel('gemini-3-flash-image')
+    
+    try:
+        response = model.generate_content([
+            beskrivelse,
+            {"mime_type": "image/jpeg", "data": optimalisert_bilde}
+        ])
+        return jsonify({"visualisering": response.text})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/sse')
+def sse():
+    # Dette forteller Claude hvilke verktøy som er tilgjengelige
+    return jsonify({
+        "tools": [{
+            "name": "visualiser_prosjekt",
+            "description": "Lager fotorealistiske visualiseringer av byggeprosjekter basert på befaringsfoto.",
+            "input_schema": {
                 "type": "object",
                 "properties": {
-                    "foto_base64": {"type": "string", "description": "Base64-kodet befaringsfoto uten data:image/jpeg;base64,-prefix"},
-                    "beskrivelse": {"type": "string", "description": "Hva som skal gjøres, f.eks. 'ny kledning i hvit trepanel, ny terrasse'"}
+                    "foto_base64": {"type": "string", "description": "Base64-strengen av bildet"},
+                    "beskrivelse": {"type": "string", "description": "Arkitektonisk beskrivelse av endringene"}
                 },
                 "required": ["foto_base64", "beskrivelse"]
             }
-        )
-    ]
-
-@server.call_tool()
-async def call_tool(name: str, arguments: dict):
-    if name != "visualiser_prosjekt":
-        raise ValueError(f"Ukjent verktøy: {name}")
-
-    if not GEMINI_API_KEY:
-        return [TextContent(type="text", text="Feil: GEMINI_API_KEY mangler i systemet.")]
-
-    prompt = f"""Dette er et befaringsfoto fra et byggprosjekt. Generer et fotorealistisk bilde som viser hvordan eiendommen vil se ut etter at følgende arbeid er utført:
-{arguments['beskrivelse']}
-Behold samme vinkel, lys og omgivelser som originalfotot. Gjør endringene realistiske og profesjonelle."""
-
-    payload = {
-        "contents": [{
-            "parts": [
-                {"text": prompt},
-                {"inline_data": {
-                    "mime_type": "image/jpeg",
-                    "data": arguments["foto_base64"]
-                }}
-            ]
-        }],
-        "generationConfig": {"responseModalities": ["IMAGE", "TEXT"]}
-    }
-
-    async with httpx.AsyncClient(timeout=60) as client:
-        r = await client.post(
-            f"{API_URL}?key={GEMINI_API_KEY}",
-            json=payload
-        )
-        r.raise_for_status()
-        data = r.json()
-
-    # Hent bildedata fra respons
-    for part in data.get("candidates", [{}])[0].get("content", {}).get("parts", []):
-        if "inlineData" in part:
-            return [ImageContent(
-                type="image",
-                data=part["inlineData"]["data"],
-                mimeType=part["inlineData"]["mimeType"]
-            )]
-
-    return [TextContent(type="text", text="Kunne ikke generere bilde")]
-
-# --- Web Server Oppsett for Railway (SSE) ---
-transport = SseServerTransport("/messages")
-
-async def handle_sse(request):
-    async with transport.connect_sse(request.scope, request.receive, request._send) as (read_stream, write_stream):
-        await server.run(read_stream, write_stream, server.create_initialization_options())
-
-async def handle_messages(request):
-    await transport.handle_post_message(request.scope, request.receive, request._send)
-
-app = Starlette(routes=[
-    Route("/sse", endpoint=handle_sse),
-    Route("/messages", endpoint=handle_messages, methods=["POST"])
-])
+        }]
+    })
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    # Kjører på porten Railway tildeler (standard 8080)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
