@@ -50,9 +50,7 @@ Resultatet skal se ut som et ekte fotografi."""
                 {"mime_type": "image/jpeg", "data": img_b64},
                 prompt
             ],
-            generation_config=genai.GenerationConfig(
-                response_modalities=["TEXT", "IMAGE"]
-            )
+            generation_config={"response_modalities": ["TEXT", "IMAGE"]}
         )
 
         # Gå gjennom alle parts og finn bildet
