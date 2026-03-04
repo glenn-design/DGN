@@ -57,7 +57,7 @@ Resultatet skal se ut som et ekte fotografi."""
         for part in res.candidates[0].content.parts:
             if hasattr(part, 'inline_data') and part.inline_data is not None:
                 return jsonify({
-                    "visualisering_base64": part.inline_data.data,
+                    "visualisering_base64": base64.b64encode(part.inline_data.data).decode("utf-8"),
                     "mime_type": part.inline_data.mime_type
                 })
 
