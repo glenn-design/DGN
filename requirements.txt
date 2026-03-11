@@ -1,4 +1,6 @@
 flask
-google-generativeai
-Pillow
 requests
+google-generativeai
+pillow
+anthropic
+python-pptx
