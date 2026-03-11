@@ -123,12 +123,12 @@ def bygg_tilbud_pptx(input_data, tekst):
 
     logo_path = "/app/dgn_logo.png"
     if os.path.exists(logo_path):
-        s1.shapes.add_picture(logo_path, px(0.7), px(1.6), px(1.5), px(1.525))
+        s1.shapes.add_picture(logo_path, px(0.6), px(1.2), px(2.2), px(2.24))
     else:
-        add_text(s1, "dgn", 0.7, 1.8, 3.5, 1.0, size=52, bold=True, color=BLACK)
-    add_text(s1, prosjekt, 0.7, 3.25, 3.5, 0.35,
-             size=12, color=LIGHT)
-    add_text(s1, dato, 0.7, 5.1, 3.5, 0.3,
+        add_text(s1, "dgn", 0.6, 1.2, 3.5, 1.8, size=72, bold=True, color=BLACK)
+    add_text(s1, prosjekt, 0.65, 3.7, 3.8, 0.4,
+             size=13, color=LIGHT)
+    add_text(s1, dato, 0.65, 5.1, 3.5, 0.3,
              size=8, bold=True, color=LIGHT)
 
     # ── SLIDE 2: PROSJEKTDATA ────────────────────────────────
