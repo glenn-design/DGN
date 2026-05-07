@@ -1,0 +1,5 @@
+node_modules/
+*.log
+widget.html
+widget.min.html
+minify_widget.js
