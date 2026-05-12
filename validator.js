@@ -1,6 +1,6 @@
 const express = require('express');
 const { Client } = require('@notionhq/client');
-const { logSession, getStats } = require('./tokenLogger');
+const { createLogger } = require('./tokenLogger');
 
 const app = express();
 app.use(express.json());
@@ -24,13 +24,13 @@ app.get('/mengder', async (req, res) => {
     });
     const rows = response.results
       .map(p => ({
-        aktivitet:   p.properties['Aktivitet']?.title?.[0]?.plain_text || '',
-        enhet:       p.properties['Enhet']?.select?.name || '',
-        ratio:       p.properties['Mengde pr m2']?.number ?? null,
-        kategori:    p.properties['Kategori']?.select?.name || '',
-        gjelder:     p.properties['Gjelder']?.select?.name || 'Felles',
+        aktivitet:    p.properties['Aktivitet']?.title?.[0]?.plain_text || '',
+        enhet:        p.properties['Enhet']?.select?.name || '',
+        ratio:        p.properties['Mengde pr m2']?.number ?? null,
+        kategori:     p.properties['Kategori']?.select?.name || '',
+        gjelder:      p.properties['Gjelder']?.select?.name || 'Felles',
         materialtype: p.properties['Materialtype']?.rich_text?.[0]?.plain_text || '',
-        skalerbar:   p.properties['Skalerbar']?.checkbox ?? true,
+        skalerbar:    p.properties['Skalerbar']?.checkbox ?? true,
       }))
       .filter(row => {
         if (!row.aktivitet) return false;
