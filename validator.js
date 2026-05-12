@@ -1,13 +1,19 @@
 const express = require('express');
+const path = require('path');
 const { Client } = require('@notionhq/client');
 const { createLogger } = require('./tokenLogger');
 
 const app = express();
 app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public')));
 
 const notion = new Client({ auth: process.env.NOTION_TOKEN });
 const { logSession, getStats } = createLogger(notion);
 const MENGDETABELLER_DB = '180e0d6b-d285-4232-89d7-dbcc07ea8987';
+
+app.get('/befaring', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'befaring.html'));
+});
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', service: 'dgn-validator', version: '2.0.0' });
@@ -24,13 +30,13 @@ app.get('/mengder', async (req, res) => {
     });
     const rows = response.results
       .map(p => ({
-        aktivitet:    p.properties['Aktivitet']?.title?.[0]?.plain_text || '',
-        enhet:        p.properties['Enhet']?.select?.name || '',
-        ratio:        p.properties['Mengde pr m2']?.number ?? null,
-        kategori:     p.properties['Kategori']?.select?.name || '',
-        gjelder:      p.properties['Gjelder']?.select?.name || 'Felles',
+        aktivitet: p.properties['Aktivitet']?.title?.[0]?.plain_text || '',
+        enhet: p.properties['Enhet']?.select?.name || '',
+        ratio: p.properties['Mengde pr m2']?.number ?? null,
+        kategori: p.properties['Kategori']?.select?.name || '',
+        gjelder: p.properties['Gjelder']?.select?.name || 'Felles',
         materialtype: p.properties['Materialtype']?.rich_text?.[0]?.plain_text || '',
-        skalerbar:    p.properties['Skalerbar']?.checkbox ?? true,
+        skalerbar: p.properties['Skalerbar']?.checkbox ?? true,
       }))
       .filter(row => {
         if (!row.aktivitet) return false;
