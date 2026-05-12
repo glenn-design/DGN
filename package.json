@@ -1,0 +1,16 @@
+{
+  "name": "dgn-validator",
+  "version": "2.0.0",
+  "description": "DGN Validator + Befaringsskjema",
+  "main": "validator.js",
+  "scripts": {
+    "start": "node validator.js"
+  },
+  "dependencies": {
+    "@notionhq/client": "^2.2.15",
+    "express": "^4.18.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
