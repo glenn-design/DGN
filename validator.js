@@ -6,6 +6,7 @@ const app = express();
 app.use(express.json());
 
 const notion = new Client({ auth: process.env.NOTION_TOKEN });
+const { logSession, getStats } = createLogger(notion);
 const MENGDETABELLER_DB = '180e0d6b-d285-4232-89d7-dbcc07ea8987';
 
 app.get('/health', (req, res) => {
