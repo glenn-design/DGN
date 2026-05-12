@@ -15,6 +15,22 @@ app.get('/befaring', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'befaring.html'));
 });
 
+const BEFARINGER_DB = 'ca3f76fe-68d1-4807-b799-19a016e43e39';
+
+app.post('/api/befaring', async (req, res) => {
+  try {
+    const { properties } = req.body;
+    if (!properties) return res.status(400).json({ error: 'properties required' });
+    const page = await notion.pages.create({
+      parent: { database_id: BEFARINGER_DB },
+      properties,
+    });
+    res.json({ ok: true, page_id: page.id, url: page.url });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', service: 'dgn-validator', version: '2.0.0' });
 });
