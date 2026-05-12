@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="no">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DGN — Befaringsskjema</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Helvetica Neue', Arial, sans-serif; background: #f9f9f8; min-height: 100vh; display: flex; justify-content: center; padding: 2rem 1rem; }
+  #root { width: 100%; max-width: 600px; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState } = React;
+
+const NOTION_DB = "ca3f76fe-68d1-4807-b799-19a016e43e39";
+const ANTHROPIC_API = "https://api.anthropic.com/v1/messages";
+
+const LV = {
+  lys_oppdal: { navn: "Lys Oppdal skifer", poster: [
+    { navn: "Fiberduk i bunn", enhet: "m²", f: a => a*1.10, notat: "10% overlapp" },
+    { navn: "Subbus 0–32 mm", enhet: "m³", t: 0.25, k: 1.25, notat: "25 cm bærelag" },
+    { navn: "Settelag, singel 4–8 mm", enhet: "m³", t: 0.04, k: 1.15, notat: "4 cm under skifer" },
+    { navn: "Lys Oppdal skifer", enhet: "m²", f: a => a*1.08, notat: "8% kapp/svinn" },
+  ]},
+  mørk_oppdal: { navn: "Mørk Oppdal skifer", poster: [
+    { navn: "Fiberduk i bunn", enhet: "m²", f: a => a*1.10, notat: "10% overlapp" },
+    { navn: "Subbus 0–32 mm", enhet: "m³", t: 0.25, k: 1.25, notat: "25 cm bærelag" },
+    { navn: "Settelag, singel 4–8 mm", enhet: "m³", t: 0.04, k: 1.15, notat: "4 cm under skifer" },
+    { navn: "Mørk Oppdal skifer", enhet: "m²", f: a => a*1.08, notat: "8% kapp/svinn" },
+  ]},
+  offerdal: { navn: "Offerdal skifer", poster: [
+    { navn: "Fiberduk i bunn", enhet: "m²", f: a => a*1.10, notat: "10% overlapp" },
+    { navn: "Subbus 0–32 mm", enhet: "m³", t: 0.25, k: 1.25, notat: "25 cm bærelag" },
+    { navn: "Settelag, singel 4–8 mm", enhet: "m³", t: 0.04, k: 1.15, notat: "4 cm under skifer" },
+    { navn: "Offerdal skifer", enhet: "m²", f: a => a*1.08, notat: "8% kapp/svinn" },
+  ]},
+  kebony: { navn: "Kebony platting", poster: [
+    { navn: "Bjelkelag 48×98 (cc 60)", enhet: "lm", f: a => a*1.7, notat: "1,7 lm/m²" },
+    { navn: "Stolpesko / fundament", enhet: "stk", f: a => Math.ceil(a/3), notat: "Ca 1 stk per 3 m²" },
+    { navn: "Kebony terrassebord 28×120", enhet: "lm", f: a => a*9*1.08, notat: "9 lm/m² + 8% kapp" },
+    { navn: "Trekonstruksjonsskruer A4", enhet: "sett", f: a => Math.ceil(a/10), notat: "1 sett per 10 m²" },
+  ]},
+  trykkimp: { navn: "Trykkimpregnert platting", poster: [
+    { navn: "Bjelkelag 48×98 (cc 60)", enhet: "lm", f: a => a*1.7, notat: "1,7 lm/m²" },
+    { navn: "Stolpesko / fundament", enhet: "stk", f: a => Math.ceil(a/3), notat: "Ca 1 stk per 3 m²" },
+    { navn: "Terrassebord 28×120 trykkimp", enhet: "lm", f: a => a*9*1.08, notat: "9 lm/m² + 8% kapp" },
+    { navn: "Trekonstruksjonsskruer A4", enhet: "sett", f: a => Math.ceil(a/10), notat: "1 sett per 10 m²" },
+  ]},
+};
+
+function beregn(key, areal) {
+  const opp = LV[key]; if (!opp || areal<=0) return [];
+  return opp.poster.map(p => {
+    const komp = p.f ? p.f(areal) : areal*(p.t||0);
+    const best = p.k ? komp*p.k : komp;
+    return { navn:p.navn, enhet:p.enhet, komp, best, hasK:!!(p.k&&p.k!==1), notat:p.notat };
+  });
+}
+function fmt(n,e) { return (e==="stk"||e==="sett") ? String(Math.ceil(n)) : n.toFixed(1).replace(".",","); }
+const today = () => new Date().toISOString().split("T")[0];
+
+const STEPS = ["1 — Kunde","2 — Jobbtype","3 — Kundens stemme","4 — Eksisterende","5 — Materiale & volum","6 — Tilkomst & risiko","7 — Gjennomføring","8 — Tilbakeføring","9 — Notater & send"];
+const JOBBER = ["Terrasse / platting","Trapp / skifer","Skiferplass","Tråkkhellegang","Støttemur","Basseng","Gårdsplass / brostein","Carport / garasje","Hage / beplantning","Rehab terrasse","Grunnarbeid","Annet"];
+const RISIKO = [["helling","Helling/skrått terreng"],["fjell","Fjell/berg i grunnen"],["drenering","Drenering nødvendig"],["graving","Graving i grunnen"],["riving","Riving av eksisterende konstruksjon"],["cca","CCA-impregnert trevirke (før 2004) — farlig avfall"],["nabogrense","Nærhet til nabogrense"],["hytte","Hytte/avsides beliggenhet"],["strom","Begrenset strøm/vann-tilgang"],["trar","Trær/røtter i veien"],["grunnmur","Gammel grunnmur/fundament"]];
+const UTSTYR = [["gravemaskin","Gravemaskin"],["beltedumper","Beltedumper"],["tipphenger","Tipphenger"],["hjullaster","Hjullaster"],["vibroplate","Vibroplate"],["laser","Laser"],["steinsag","Steinsag/vinkelsliper"]];
+const TILBAKE = [["beplantning","Beplantning/hekk rives og replantes"],["fliser","Fliser/heller fjernes og legges tilbake"],["gjerder","Gjerder/støttemurer fjernes og settes opp igjen"],["torv","Torvdekke/plen gjenopprettes"]];
+
+const S = {
+  card: { background:"white", border:"1px solid #e7e5e4", borderRadius:12, padding:"1.5rem", marginBottom:"1.5rem" },
+  label: { display:"block", fontSize:11, fontWeight:700, color:"#78716c", marginBottom:5, textTransform:"uppercase", letterSpacing:"0.07em" },
+  hint: { fontSize:11, color:"#a8a29e", fontStyle:"italic", marginBottom:8, lineHeight:1.5 },
+  input: { width:"100%", padding:"10px 12px", borderRadius:8, border:"1px solid #e7e5e4", fontSize:14, color:"#1c1917", outline:"none", fontFamily:"inherit" },
+  textarea: { width:"100%", padding:"10px 12px", borderRadius:8, border:"1px solid #e7e5e4", fontSize:14, color:"#1c1917", outline:"none", resize:"vertical", minHeight:80, fontFamily:"inherit" },
+  grid2: { display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:14 },
+  mb: { marginBottom:14 },
+};
+
+function Pill({label, active, onClick}) {
+  return <span onClick={onClick} style={{ display:"inline-block", padding:"7px 16px", borderRadius:20, fontSize:13, fontWeight:500, cursor:"pointer", userSelect:"none", margin:"0 6px 6px 0", border:`1.5px solid ${active?"#1c1917":"#e7e5e4"}`, background:active?"#1c1917":"white", color:active?"white":"#57534e", transition:"all 0.12s" }}>{label}</span>;
+}
+
+function Chk({label, sub, checked, onChange}) {
+  return (
+    <label style={{ display:"flex", alignItems:"flex-start", gap:10, padding:"10px 14px", borderRadius:8, border:`1px solid ${checked?"#1c1917":"#e7e5e4"}`, background:checked?"#f9f9f8":"white", cursor:"pointer", marginBottom:8 }}>
+      <input type="checkbox" checked={checked} onChange={e=>onChange(e.target.checked)} style={{ marginTop:2, accentColor:"#1c1917", flexShrink:0, width:16, height:16 }}/>
+      <div>
+        <div style={{ fontSize:13, color:"#1c1917", lineHeight:1.4 }}>{label}</div>
+        {sub && <div style={{ fontSize:11, color:"#a8a29e", marginTop:2 }}>{sub}</div>}
+      </div>
+    </label>
+  );
+}
+
+function App() {
+  const [step, setStep] = useState(0);
+  const [saving, setSaving] = useState(false);
+  const [done, setDone] = useState(false);
+  const [notionUrl, setNotionUrl] = useState("");
+  const [error, setError] = useState("");
+
+  const [f, setF] = useState({
+    navn:"", adresse:"", post:"1440 Drøbak", tlf:"", epost:"", dato:today(), utfortAv:"Geir",
+    jobber:new Set(), jobbAnnet:"", prismodell:"", antallPoster:"", diskutertPris:"Nei",
+    forestiltBruk:"", smerte:"", nokkelfraser:"", prioritet:"", livssituasjon:"",
+    eksisterende:"", alderKonstruksjon:"",
+    material:"lys_oppdal", areal:40, arealMode:"slider", høydeforskjell:"", andreMaterialer:"",
+    tilkomst:"God", risiko:{}, risikoNotat:"", utstyr:{},
+    oppstart:"", andreLeverandorer:"",
+    tilbakeAktuelt:false, tilbakeUnderlag:"", tilbakeEl:{}, tilbakeNotat:"",
+    notater:"",
+  });
+
+  const upd = (k,v) => setF(p=>({...p,[k]:v}));
+  const togSet = (k,v) => setF(p=>{ const n=new Set(p[k]); n.has(v)?n.delete(v):n.add(v); return {...p,[k]:n}; });
+  const togObj = (k,sk) => setF(p=>({...p,[k]:{...p[k],[sk]:!p[k][sk]}}));
+
+  const poster = beregn(f.material, f.areal);
+  const totVol = poster.filter(p=>p.enhet==="m³").reduce((s,p)=>s+p.best,0);
+
+  const canNext = () => {
+    if (step===0) return f.navn&&f.dato;
+    if (step===1) return f.jobber.size>0;
+    if (step===2) return f.forestiltBruk&&f.smerte;
+    return true;
+  };
+
+  async function lagre() {
+    setSaving(true); setError("");
+    const jobbtype = [...f.jobber].join(", ")||"Annet";
+    const risikoListe = Object.entries(f.risiko).filter(([,v])=>v).map(([k])=>RISIKO.find(r=>r[0]===k)?.[1]||k);
+    const notat = [
+      f.forestiltBruk&&`Forestilt bruk: ${f.forestiltBruk}`,
+      f.smerte&&`Smerte: ${f.smerte}`,
+      f.nokkelfraser&&`Nøkkelfraser: ${f.nokkelfraser}`,
+      f.eksisterende&&`Eksisterende: ${f.eksisterende}`,
+      f.alderKonstruksjon&&`Alder: ${f.alderKonstruksjon}`,
+      risikoListe.length&&`Risiko: ${risikoListe.join(", ")}`,
+      f.risikoNotat&&`Risikonotat: ${f.risikoNotat}`,
+      Object.entries(f.utstyr).filter(([,v])=>v).length&&`Utstyr: ${Object.entries(f.utstyr).filter(([,v])=>v).map(([k])=>UTSTYR.find(u=>u[0]===k)?.[1]).join(", ")}`,
+      f.tilbakeAktuelt&&`Tilbakeføring: ${Object.entries(f.tilbakeEl).filter(([,v])=>v).map(([k])=>TILBAKE.find(t=>t[0]===k)?.[1]).join(", ")}`,
+      f.notater&&`Notater: ${f.notater}`,
+    ].filter(Boolean).join("\n");
+
+    const props = {
+      "Prosjektnavn":{title:[{text:{content:`${f.navn} — ${jobbtype}`}}]},
+      "Adresse prosjekt":{rich_text:[{text:{content:`${f.adresse}, ${f.post}`.trim().replace(/^,\s*/,"")}}]},
+      "Dato befaring":{date:{start:f.dato}},
+      "Produkttype":{select:{name:jobbtype.split(",")[0].trim()}},
+      "Forestilt bruk":{rich_text:[{text:{content:f.forestiltBruk}}]},
+      "Smerte friksjon":{rich_text:[{text:{content:f.smerte}}]},
+      "Nøkkelfraser":{rich_text:[{text:{content:f.nokkelfraser}}]},
+      "Tilkomst":{select:{name:f.tilkomst}},
+      "Riving":{checkbox:!!f.risiko.riving},
+      "Nabogrense":{checkbox:!!f.risiko.nabogrense},
+      "Prismodell":{select:{name:f.prismodell||"Estimat"}},
+      "Status":{select:{name:"Planlagt"}},
+      "Notater befaring":{rich_text:[{text:{content:notat}}]},
+    };
+    if (f.areal) props["Areal m2"]={number:f.areal};
+    if (f.prioritet) props["Prioritet"]={select:{name:f.prioritet}};
+    if (f.livssituasjon) props["Livssituasjon"]={select:{name:f.livssituasjon}};
+    if (f.andreLeverandorer) { props["Eksterne leverandører"]={checkbox:true}; props["Eksterne leverandører detaljer"]={rich_text:[{text:{content:f.andreLeverandorer}}]}; }
+
+    try {
+      const res = await fetch(ANTHROPIC_API, {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
+          model:"claude-sonnet-4-20250514", max_tokens:512,
+          mcp_servers:[{type:"url",url:"https://mcp.notion.com/mcp",name:"notion"}],
+          system:`Opprett en ny side i Notion-databasen ID: ${NOTION_DB} med disse properties. Returner KUN JSON: {"page_id":"...","url":"..."}`,
+          messages:[{role:"user",content:`Properties:\n${JSON.stringify(props)}`}],
+        })
+      });
+      const data = await res.json();
+      const text = (data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("");
+      let url="";
+      try { url=JSON.parse(text.replace(/```json|```/g,"").trim()).url||""; } catch{}
+      setNotionUrl(url);
+      setDone(true);
+    } catch(e) { setError(e.message); }
+    finally { setSaving(false); }
+  }
+
+  if (done) return (
+    <div style={{ textAlign:"center", padding:"4rem 2rem" }}>
+      <div style={{ fontSize:56, marginBottom:16 }}>✅</div>
+      <h1 style={{ fontSize:22, fontWeight:600, color:"#1c1917", marginBottom:8 }}>Befaring lagret!</h1>
+      <p style={{ fontSize:14, color:"#78716c", marginBottom:4 }}>{f.navn} — {[...f.jobber].join(", ")}</p>
+      <p style={{ fontSize:13, color:"#a8a29e", marginBottom:28 }}>Gå til Claude-chatten og skriv «lag tilbud for {f.navn}»</p>
+      {notionUrl && <p style={{ marginBottom:24 }}><a href={notionUrl} target="_blank" style={{ fontSize:13, color:"#3b82f6" }}>Åpne befaring i Notion ↗</a></p>}
+      <button onClick={()=>{setDone(false);setStep(0);setF(p=>({...p,navn:"",adresse:"",jobber:new Set(),forestiltBruk:"",smerte:"",nokkelfraser:"",notater:"",risiko:{},utstyr:{},tilbakeEl:{}}));}}
+        style={{ padding:"12px 28px", borderRadius:8, background:"#1c1917", color:"white", border:"none", fontSize:14, cursor:"pointer" }}>
+        Ny befaring
+      </button>
+    </div>
+  );
+
+  return (
+    <div>
+      {/* Header */}
+      <div style={{ marginBottom:24 }}>
+        <div style={{ fontSize:11, fontWeight:700, letterSpacing:"0.12em", textTransform:"uppercase", color:"#a8a29e", marginBottom:12 }}>DGN — Befaringsskjema</div>
+        <div style={{ display:"flex", gap:3, marginBottom:6 }}>
+          {STEPS.map((_,i)=><div key={i} style={{ flex:1, height:3, borderRadius:2, background:i<=step?"#1c1917":"#e7e5e4", transition:"background 0.2s" }}/>)}
+        </div>
+        <div style={{ fontSize:13, fontWeight:600, color:"#1c1917" }}>{STEPS[step]}</div>
+      </div>
+
+      {/* Steg 1 */}
+      {step===0 && <div style={S.card}>
+        <div style={S.grid2}>
+          <div><label style={S.label}>Kundenavn *</label><input style={S.input} value={f.navn} onChange={e=>upd("navn",e.target.value)} placeholder="Ola Nordmann"/></div>
+          <div><label style={S.label}>Dato befaring *</label><input type="date" style={S.input} value={f.dato} onChange={e=>upd("dato",e.target.value)}/></div>
+        </div>
+        <div style={S.mb}><label style={S.label}>Adresse</label><input style={S.input} value={f.adresse} onChange={e=>upd("adresse",e.target.value)} placeholder="Storgata 12"/></div>
+        <div style={S.grid2}>
+          <div><label style={S.label}>Postnr og sted</label><input style={S.input} value={f.post} onChange={e=>upd("post",e.target.value)}/></div>
+          <div><label style={S.label}>Telefon</label><input style={S.input} value={f.tlf} onChange={e=>upd("tlf",e.target.value)}/></div>
+        </div>
+        <div style={S.grid2}>
+          <div><label style={S.label}>E-post</label><input style={S.input} value={f.epost} onChange={e=>upd("epost",e.target.value)}/></div>
+          <div><label style={S.label}>Utført av</label><input style={S.input} value={f.utfortAv} onChange={e=>upd("utfortAv",e.target.value)}/></div>
+        </div>
+      </div>}
+
+      {/* Steg 2 */}
+      {step===1 && <div style={S.card}>
+        <div style={S.mb}>
+          <label style={S.label}>Jobbtype * (velg én eller flere)</label>
+          <div style={{ marginTop:8 }}>{JOBBER.map(p=><Pill key={p} label={p} active={f.jobber.has(p)} onClick={()=>togSet("jobber",p)}/>)}</div>
+          {f.jobber.has("Annet")&&<input style={{ ...S.input, marginTop:10 }} value={f.jobbAnnet} onChange={e=>upd("jobbAnnet",e.target.value)} placeholder="Beskriv jobbtypen"/>}
+        </div>
+        <div style={S.mb}>
+          <label style={S.label}>Prismodell</label>
+          <div style={{ marginTop:8 }}>{["Estimat","Fastpris","Regningsarbeid","Kombinasjon"].map(p=><Pill key={p} label={p} active={f.prismodell===p} onClick={()=>upd("prismodell",p)}/>)}</div>
+        </div>
+        <div style={S.grid2}>
+          <div><label style={S.label}>Ant. poster (ca.)</label><input style={S.input} value={f.antallPoster} onChange={e=>upd("antallPoster",e.target.value)} placeholder="f.eks. 4"/></div>
+          <div><label style={S.label}>Diskutert pris?</label>
+            <select style={S.input} value={f.diskutertPris} onChange={e=>upd("diskutertPris",e.target.value)}><option>Nei</option><option>Ja</option></select>
+          </div>
+        </div>
+      </div>}
+
+      {/* Steg 3 */}
+      {step===2 && <div style={S.card}>
+        <div style={{ padding:"10px 14px", background:"#f0fdf4", borderRadius:8, border:"1px solid #bbf7d0", fontSize:12, color:"#166534", lineHeight:1.6, marginBottom:16 }}>
+          💡 <strong>Samtaleguide.</strong> Still disse spørsmålene ordrett til kunden under befaringen. Svarene brukes direkte i tilbudets ingress.
+        </div>
+        <div style={S.mb}>
+          <label style={S.label}>Spørsmål 1 — Forestilt bruk *</label>
+          <div style={S.hint}>«Tenk dere et år frem i tid — det er sommer og dere bruker det nye området. Hva gjør dere der?»</div>
+          <textarea style={S.textarea} value={f.forestiltBruk} onChange={e=>upd("forestiltBruk",e.target.value)} placeholder="Kundens svar, så konkret som mulig..."/>
+        </div>
+        <div style={S.mb}>
+          <label style={S.label}>Spørsmål 2 — Smerte / friksjon *</label>
+          <div style={S.hint}>«Hva irriterer eller frustrerer dere ved hvordan det er nå?»</div>
+          <textarea style={S.textarea} value={f.smerte} onChange={e=>upd("smerte",e.target.value)} placeholder="Kundens svar..."/>
+        </div>
+        <div style={S.mb}>
+          <label style={S.label}>Spørsmål 3 — Nøkkelfraser</label>
+          <div style={S.hint}>1–3 setninger ordrett slik kunden faktisk sa det.</div>
+          <textarea style={{ ...S.textarea, minHeight:56 }} value={f.nokkelfraser} onChange={e=>upd("nokkelfraser",e.target.value)} placeholder="«vi vil ha det koselig når barnebarna er her»"/>
+        </div>
+        <div style={S.mb}>
+          <label style={S.label}>Hva er viktigst for kunden?</label>
+          <div style={{ marginTop:8 }}>{["Praktisk","Estetisk","Varig","Balansert"].map(p=><Pill key={p} label={p} active={f.prioritet===p} onClick={()=>upd("prioritet",f.prioritet===p?"":p)}/>)}</div>
+        </div>
+        <div>
+          <label style={S.label}>Hjemmesituasjon <span style={{ fontWeight:400, textTransform:"none" }}>(valgfri)</span></label>
+          <div style={{ marginTop:8 }}>{["Småbarnsfamilie","Barnebarn på besøk","Par uten barn hjemme","Enslig"].map(p=><Pill key={p} label={p} active={f.livssituasjon===p} onClick={()=>upd("livssituasjon",f.livssituasjon===p?"":p)}/>)}</div>
+        </div>
+      </div>}
+
+      {/* Steg 4 */}
+      {step===3 && <div style={S.card}>
+        <div style={S.mb}><label style={S.label}>Hva er der i dag?</label><textarea style={S.textarea} value={f.eksisterende} onChange={e=>upd("eksisterende",e.target.value)} placeholder="Gammel platting, gress, grus, asfalt, bart fjell osv."/></div>
+        <div>
+          <label style={S.label}>Alder på eksisterende konstruksjon</label>
+          <div style={S.hint}>Viktig for CCA-vurdering — trevirke fra før 2004 er farlig avfall</div>
+          <input style={S.input} value={f.alderKonstruksjon} onChange={e=>upd("alderKonstruksjon",e.target.value)} placeholder="f.eks. 1998, «1990-tallet», ukjent"/>
+          {f.alderKonstruksjon && parseInt(f.alderKonstruksjon)<2004 &&
+            <div style={{ marginTop:8, padding:"8px 12px", background:"#fffbeb", borderRadius:6, border:"1px solid #fde68a", fontSize:12, color:"#92400e" }}>⚠ Byggeår før 2004 — husk CCA-avkryssing i steg 6</div>}
+        </div>
+      </div>}
+
+      {/* Steg 5 */}
+      {step===4 && <div style={S.card}>
+        <div style={S.mb}>
+          <label style={S.label}>Materiale</label>
+          <select style={{ ...S.input, fontSize:14, fontWeight:500, marginTop:6 }} value={f.material} onChange={e=>upd("material",e.target.value)}>
+            <optgroup label="Skifer / heller / stein">
+              <option value="lys_oppdal">Lys Oppdal skifer</option>
+              <option value="mørk_oppdal">Mørk Oppdal skifer</option>
+              <option value="offerdal">Offerdal skifer</option>
+            </optgroup>
+            <optgroup label="Tre / platting">
+              <option value="kebony">Kebony platting</option>
+              <option value="trykkimp">Trykkimpregnert platting</option>
+            </optgroup>
+          </select>
+        </div>
+        <div style={S.mb}>
+          <div style={{ display:"flex", alignItems:"baseline", justifyContent:"space-between", marginBottom:10 }}>
+            <div><span style={{ fontSize:32, fontWeight:200, color:"#1c1917" }}>{f.areal}</span><span style={{ fontSize:14, color:"#a8a29e", marginLeft:6 }}>m²</span></div>
+            <button onClick={()=>upd("arealMode",f.arealMode==="slider"?"tall":"slider")} style={{ fontSize:12, color:"#78716c", background:"none", border:"1px solid #e7e5e4", borderRadius:6, padding:"5px 12px", cursor:"pointer" }}>{f.arealMode==="slider"?"Skriv inn":"Bruk slider"}</button>
+          </div>
+          {f.arealMode==="slider"
+            ? <input type="range" min={1} max={200} step={1} value={f.areal} onChange={e=>upd("areal",parseInt(e.target.value))} style={{ width:"100%", accentColor:"#1c1917", cursor:"pointer" }}/>
+            : <input type="number" style={S.input} value={f.areal} onChange={e=>upd("areal",parseFloat(e.target.value)||1)} placeholder="m²"/>
+          }
+        </div>
+        <div>
+          <div style={{ fontSize:11, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.08em", color:"#a8a29e", marginBottom:10 }}>Materialliste</div>
+          {poster.map((p,i)=>(
+            <div key={i} style={{ display:"flex", justifyContent:"space-between", padding:"10px 0", borderTop:i>0?"1px solid #f5f5f4":"none" }}>
+              <div><div style={{ fontSize:13, color:"#1c1917", fontWeight:500 }}>{p.navn}</div><div style={{ fontSize:11, color:"#a8a29e" }}>{p.notat}</div></div>
+              <div style={{ textAlign:"right" }}>
+                <div style={{ fontSize:14, fontWeight:500, color:"#1c1917" }}>{fmt(p.komp,p.enhet)} {p.enhet}</div>
+                {p.hasK&&<div style={{ fontSize:11, color:"#2563eb" }}>→ best. {fmt(p.best,p.enhet)} {p.enhet}</div>}
+              </div>
+            </div>
+          ))}
+          {totVol>0&&<div style={{ marginTop:12, padding:"10px 14px", background:"#eff6ff", borderRadius:8, display:"flex", justifyContent:"space-between" }}><span style={{ fontSize:13, color:"#1d4ed8" }}>Totalt masseuttak</span><span style={{ fontSize:16, fontWeight:600, color:"#1d4ed8" }}>{totVol.toFixed(1).replace(".",",")} m³</span></div>}
+        </div>
+        <div style={{ ...S.grid2, marginTop:14 }}>
+          <div><label style={S.label}>Høydeforskjell (m)</label><input style={S.input} value={f.høydeforskjell} onChange={e=>upd("høydeforskjell",e.target.value)} placeholder="f.eks. 0.5"/></div>
+          <div><label style={S.label}>Andre materialer / ønsker</label><input style={S.input} value={f.andreMaterialer} onChange={e=>upd("andreMaterialer",e.target.value)} placeholder="f.eks. antikkstein"/></div>
+        </div>
+      </div>}
+
+      {/* Steg 6 */}
+      {step===5 && <div style={S.card}>
+        <div style={S.mb}>
+          <label style={S.label}>Tilkomst *</label>
+          <div style={{ marginTop:8 }}>
+            {[["God","Lastebil og gravemaskin kan komme inn"],["Begrenset","Pickup/varebil, manuell massehåndtering"],["Vanskelig","Kun bæring, spesialtransport nødvendig"]].map(([v,sub])=>(
+              <div key={v} onClick={()=>upd("tilkomst",v)} style={{ padding:"12px 14px", borderRadius:8, cursor:"pointer", border:`1.5px solid ${f.tilkomst===v?"#1c1917":"#e7e5e4"}`, background:f.tilkomst===v?"#f9f9f8":"white", marginBottom:8 }}>
+                <div style={{ fontSize:14, fontWeight:600, color:"#1c1917" }}>{v}</div>
+                <div style={{ fontSize:12, color:"#a8a29e", marginTop:2 }}>{sub}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div style={S.mb}>
+          <label style={S.label}>Risikofaktorer</label>
+          <div style={{ marginTop:8 }}>
+            {RISIKO.map(([k,label])=><Chk key={k} label={label} checked={!!f.risiko[k]} onChange={()=>togObj("risiko",k)}/>)}
+          </div>
+        </div>
+        <div style={S.mb}><label style={S.label}>Notat risiko</label><textarea style={{ ...S.textarea, minHeight:56 }} value={f.risikoNotat} onChange={e=>upd("risikoNotat",e.target.value)} placeholder="Utdyp..."/></div>
+        <div>
+          <label style={S.label}>Utstyr som trengs</label>
+          <div style={{ marginTop:8 }}>{UTSTYR.map(([k,label])=><Pill key={k} label={label} active={!!f.utstyr[k]} onClick={()=>togObj("utstyr",k)}/>)}</div>
+        </div>
+      </div>}
+
+      {/* Steg 7 */}
+      {step===6 && <div style={S.card}>
+        <div style={S.grid2}>
+          <div><label style={S.label}>Ønsket oppstart</label><input style={S.input} value={f.oppstart} onChange={e=>upd("oppstart",e.target.value)} placeholder="f.eks. uke 22, før sommeren"/></div>
+          <div><label style={S.label}>Andre leverandører</label><input style={S.input} value={f.andreLeverandorer} onChange={e=>upd("andreLeverandorer",e.target.value)} placeholder="elektriker, rørlegger..."/></div>
+        </div>
+      </div>}
+
+      {/* Steg 8 */}
+      {step===7 && <div style={S.card}>
+        <Chk label="Tilbakeføring er aktuelt for dette prosjektet" checked={f.tilbakeAktuelt} onChange={v=>upd("tilbakeAktuelt",v)}/>
+        {f.tilbakeAktuelt && <>
+          <div style={{ ...S.mb, marginTop:14 }}><label style={S.label}>Underlag som skal tilbakeføres</label><textarea style={{ ...S.textarea, minHeight:56 }} value={f.tilbakeUnderlag} onChange={e=>upd("tilbakeUnderlag",e.target.value)} placeholder="Hva er der i dag og skal gjenopprettes?"/></div>
+          <div style={S.mb}><label style={S.label}>Elementer som håndteres</label><div style={{ marginTop:8 }}>{TILBAKE.map(([k,label])=><Chk key={k} label={label} checked={!!f.tilbakeEl[k]} onChange={()=>togObj("tilbakeEl",k)}/>)}</div></div>
+          <div><label style={S.label}>Notat</label><textarea style={{ ...S.textarea, minHeight:52 }} value={f.tilbakeNotat} onChange={e=>upd("tilbakeNotat",e.target.value)} placeholder="Utdyp..."/></div>
+        </>}
+      </div>}
+
+      {/* Steg 9 */}
+      {step===8 && <div style={S.card}>
+        <div style={S.mb}><label style={S.label}>Egne notater</label><textarea style={{ ...S.textarea, minHeight:100 }} value={f.notater} onChange={e=>upd("notater",e.target.value)} placeholder="Tanker, ideer, ting å huske..."/></div>
+        <div style={{ padding:14, background:"#f9f9f8", borderRadius:8, border:"1px solid #e7e5e4", fontSize:13, lineHeight:2, color:"#57534e" }}>
+          <div style={{ fontSize:10, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.08em", color:"#a8a29e", marginBottom:8 }}>Oppsummering</div>
+          <div><strong>Kunde:</strong> {f.navn||"—"} {f.adresse&&`· ${f.adresse}`}</div>
+          <div><strong>Jobbtype:</strong> {[...f.jobber].join(", ")||"—"}</div>
+          <div><strong>Areal:</strong> {f.areal} m² · <strong>Materiale:</strong> {LV[f.material]?.navn}</div>
+          <div><strong>Tilkomst:</strong> {f.tilkomst} · <strong>Prismodell:</strong> {f.prismodell||"—"}</div>
+          {Object.entries(f.risiko).some(([,v])=>v)&&<div style={{ color:"#b45309" }}>⚠ {Object.entries(f.risiko).filter(([,v])=>v).map(([k])=>RISIKO.find(r=>r[0]===k)?.[1]).join(", ")}</div>}
+        </div>
+        {error&&<div style={{ marginTop:12, padding:"10px 14px", background:"#fef2f2", borderRadius:8, fontSize:12, color:"#991b1b" }}>Feil: {error}</div>}
+      </div>}
+
+      {/* Nav */}
+      <div style={{ display:"flex", justifyContent:"space-between", paddingTop:8 }}>
+        <button onClick={()=>setStep(s=>s-1)} disabled={step===0}
+          style={{ padding:"12px 24px", borderRadius:8, border:"1px solid #e7e5e4", background:"white", color:step===0?"#d6d3d1":"#1c1917", fontSize:14, cursor:step===0?"default":"pointer" }}>
+          ← Tilbake
+        </button>
+        {step<STEPS.length-1
+          ? <button onClick={()=>setStep(s=>s+1)} disabled={!canNext()}
+              style={{ padding:"12px 28px", borderRadius:8, background:canNext()?"#1c1917":"#d6d3d1", color:"white", border:"none", fontSize:14, fontWeight:500, cursor:canNext()?"pointer":"default" }}>
+              Neste →
+            </button>
+          : <button onClick={lagre} disabled={saving}
+              style={{ padding:"12px 28px", borderRadius:8, background:saving?"#78716c":"#1c1917", color:"white", border:"none", fontSize:14, fontWeight:500, cursor:saving?"default":"pointer" }}>
+              {saving?"Lagrer...":"Lagre i Notion ↗"}
+            </button>
+        }
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
